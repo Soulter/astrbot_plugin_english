@@ -51,9 +51,12 @@ class Main:
     def __init__(self, context: Context) -> None:
         
         self.context = context
-        self.context.register_commands(NAMESPACE, r"^\.([a-zA-Z]+)$", "记录英文单词", 1, self.vocab_record, use_regex=True, ignore_prefix=True)
+        self.context.register_commands(NAMESPACE, r"^\.([a-zA-Z]+)$", "查询并记录英文单词", 1, self.vocab_record, use_regex=True, ignore_prefix=True)
         self.context.register_commands(NAMESPACE, r"\.\.memo", "随机单词", 2, self.memo, use_regex=True, ignore_prefix=True)
         self.context.register_commands(NAMESPACE, r"\.([1-9][0-9]*)(?:\s([1-9][0-9]*))*", "遗忘单词", 1, self.forget, use_regex=True, ignore_prefix=True)
+        self.context.register_commands(NAMESPACE, r"^\,([a-zA-Z]+)$", "仅查询英文单词", 1, self.vocab_query, use_regex=True, ignore_prefix=True)
+        self.context.register_commands(NAMESPACE, r"^\;([a-zA-Z]+)$", "移出记忆库", 1, self.vocab_remove, use_regex=True, ignore_prefix=True)
+        
 
         # load difficulty data
         self.difficulty_data = {}
@@ -103,6 +106,42 @@ class Main:
             message_chain=[Plain(ret + "\n" + "已加入记忆库。")],
             use_t2i=False
         )
+        
+    async def vocab_remove(self, message: AstrMessageEvent, context: Context):
+        unified_id = message.unified_msg_origin
+        word = message.message_str[1:]
+        
+        if unified_id not in self.vocab_data:
+            return CommandResult().message("你还没有记录过任何单词哦")
+        
+        if word not in self.vocab_data[unified_id]:
+            return CommandResult().message("你还没有记录过这个单词哦")
+        
+        del self.vocab_data[unified_id][word]
+        
+        with open(DATA_PATH, "w") as f:
+            json.dump(self.vocab_data, f)
+            
+        return CommandResult().message(f"已将 {word} 移出记忆库。")
+        
+    async def vocab_query(self, message: AstrMessageEvent, context: Context):
+        word = message.message_str[1:]
+        llm_instance = None
+        for llm in context.llms:
+            if llm.llm_name == 'internal_openai':
+                llm_instance = llm.llm_instance
+                break
+        ret = await llm_instance.text_chat(PROMPT_VOCAB_EXPLAIN.format(word=word), session_id=message.unified_msg_origin)
+    
+        difficulty = self.difficulty_data.get(word, '')
+        
+        if difficulty:
+            ret += f"\n记忆难度：{difficulty}/10"
+
+        return CommandResult(
+            message_chain=[Plain(ret)],
+            use_t2i=False
+        )
 
     async def compute_forget_probability(self, unified_id):
         forget_probabilities = defaultdict(float)
@@ -145,15 +184,15 @@ class Main:
             return CommandResult().message("你还没有记录过任何单词哦")
         
         # retrieve 10 words randomly based on the forget probabilities using roulette wheel selection
-        words = []
-        probs = []
-        for word, prob in forget_probabilities.items():
-            words.append(word)
-            probs.append(prob)
-        k = min(10, len(words))
-        probs = [p / sum(probs) for p in probs]
-        selected_words = random.choices(words, weights=probs, k=k)
-
+        # words = []
+        # probs = []
+        # for word, prob in forget_probabilities.items():
+        #     words.append(word)
+        #     probs.append(prob)
+        k = min(10, len(forget_probabilities))
+        # probs = [p / sum(probs) for p in probs]
+        # selected_words = random.choices(words, weights=probs, k=k)
+        selected_words = sorted(forget_probabilities, key=lambda x: forget_probabilities[x])[:k]
         ret = "按记忆曲线抽取出单词：\n"
         for idx, word in enumerate(selected_words):
             ret += f"{idx+1}. {word}\n"
