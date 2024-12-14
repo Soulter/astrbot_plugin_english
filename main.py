@@ -1,9 +1,13 @@
-import os, csv, time, json, random, re
+import os
+import csv
+import time
+import json
+import re
 import math
 from collections import defaultdict
 from enum import Enum
-from util.plugin_dev.api.v1.bot import Context, AstrMessageEvent, CommandResult
-from util.plugin_dev.api.v1.types import *
+from astrbot.api.all import Context, AstrMessageEvent, CommandResult
+from astrbot.api.message_components import Plain
 
 PLUGIN_PATH = os.path.abspath(__file__)
 DATA_PATH = "data/astrbot_plugin_english_data.json"
@@ -95,16 +99,11 @@ class Main:
         with open(DATA_PATH, "w") as f:
             json.dump(self.vocab_data, f)
 
-        llm_instance = None
-        for llm in context.llms:
-            if llm.llm_name == 'internal_openai':
-                llm_instance = llm.llm_instance
-                break
-        ret = await llm_instance.text_chat(PROMPT_VOCAB_EXPLAIN.format(word=word), session_id=unified_id)
+        ret = await self.context.get_using_provider().text_chat(PROMPT_VOCAB_EXPLAIN.format(word=word), session_id=unified_id)
 
         return CommandResult(
-            message_chain=[Plain(ret + "\n" + "已加入记忆库。")],
-            use_t2i=False
+            chain=[Plain(ret.completion_text + "\n" + "已加入记忆库。")],
+            use_t2i_=False
         )
         
     async def vocab_remove(self, message: AstrMessageEvent, context: Context):
@@ -126,21 +125,17 @@ class Main:
         
     async def vocab_query(self, message: AstrMessageEvent, context: Context):
         word = message.message_str[1:]
-        llm_instance = None
-        for llm in context.llms:
-            if llm.llm_name == 'internal_openai':
-                llm_instance = llm.llm_instance
-                break
-        ret = await llm_instance.text_chat(PROMPT_VOCAB_EXPLAIN.format(word=word), session_id=message.unified_msg_origin)
-    
+
+        ret = await self.context.get_using_provider().text_chat(PROMPT_VOCAB_EXPLAIN.format(word=word), session_id=message.unified_msg_origin)
+        
         difficulty = self.difficulty_data.get(word, '')
         
         if difficulty:
             ret += f"\n记忆难度：{difficulty}/10"
 
         return CommandResult(
-            message_chain=[Plain(ret)],
-            use_t2i=False
+            chain=[Plain(ret.completion_text)],
+            use_t2i_=False
         )
 
     async def compute_forget_probability(self, unified_id):
@@ -202,8 +197,8 @@ class Main:
         ret += "`.`开头，遗忘输入单词序号，空格分隔。"
 
         return CommandResult(
-            message_chain=[Plain(ret)],
-            use_t2i=False
+            chain=[Plain(ret)],
+            use_t2i_=False
         )
         
     async def forget(self, message: AstrMessageEvent, context: Context):
